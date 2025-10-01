@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/socket.h>
 
+#include "ip.h"
 #include "try.h"
 
 #define NLMSG_TAIL(nmsg) ((struct rtattr*)(((void*)(nmsg)) + NLMSG_ALIGN((nmsg)->nlmsg_len)))
@@ -76,5 +77,6 @@ int rtnl_create_veth_pair(int rtnl, const char* ifname, const char* peername);
 int rtnl_create_dummy(int rtnl, const char* ifname);
 int rtnl_move_if_to_netns(int rtnl, const char* ifname, int netns);
 int rtnl_link_set_up(int rtnl, const char* ifname);
+int rtnl_link_add_addr(int rtnl, unsigned int ifindex, ip_addr_t ip, uint8_t prefix);
 
 #endif  // EVERYCAST_NETLINK_H

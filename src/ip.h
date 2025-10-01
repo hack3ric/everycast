@@ -9,9 +9,15 @@
 typedef union ip_addr {
   struct in6_addr v6;
   struct {
-    __be32 __pad[3];
-    in_addr_t v4;
+    __be32 __pad1[2];
+    __be16 __pad2;
+    __be16 v4_marker;
+    union {
+      in_addr_t v4;
+      __u8 v4_addr8[4];
+    };
   };
+  __u8 v6_addr8[16];
   __be16 v6_addr16[8];
   __be32 v6_addr32[4];
   __be64 v6_addr64[2];
@@ -24,12 +30,14 @@ static inline int ip_proto(ip_addr_t ip) {
     return AF_INET6;
 }
 
-static inline int ip_max_prefix(ip_addr_t ip) {
-  if (ip_proto(ip) == AF_INET)
+static inline int ip_proto_max_prefix(int proto) {
+  if (proto == AF_INET)
     return 32;
   else
     return 128;
 }
+
+static inline int ip_max_prefix(ip_addr_t ip) { return ip_proto_max_prefix(ip_proto(ip)); }
 
 static inline void* ip_buf(ip_addr_t* ip) {
   if (ip_proto(*ip) == AF_INET)
@@ -38,9 +46,17 @@ static inline void* ip_buf(ip_addr_t* ip) {
     return &ip->v6;
 }
 
+static inline int ip_buf_len(ip_addr_t ip) {
+  if (ip_proto(ip) == AF_INET)
+    return sizeof(ip.v4);
+  else
+    return sizeof(ip.v6);
+}
+
 static inline ip_addr_t ip_canonicalize(ip_addr_t ip) {
   // Deprecated IPv4-mapped IPv6 range ::/96
-  if (ip.v6_addr32[0] == 0 && ip.v6_addr32[1] == 0 && ip.v6_addr32[2] == 0 && ip.v6_addr32[3] != 0)
+  if (ip.v6_addr32[0] == 0 && ip.v6_addr32[1] == 0 && ip.v6_addr32[2] == 0 &&
+      ip.v6_addr32[3] != 0 && ip.v6_addr32[3] != htonl(1))
     ip.v6_addr16[5] = 0xffff;
   return ip;
 }

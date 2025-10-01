@@ -4,5 +4,6 @@
 int netns_create(int* orig, int* new);
 int netns_set(int netns);
 long netns_if_nametoindex(int netns, const char* ifname);
+int netns_is_current(int netns);
 
 #endif  // EVERYCAST_NETNS_H

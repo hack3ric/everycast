@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -23,15 +24,14 @@ int netns_create(int* orig_fd, int* new_fd) {
 
 inline int netns_set(int netns) { return setns(netns, CLONE_NEWNET); }
 
-static inline int _netns_if_nametoindex(int netns, const char* ifname, unsigned int* index,
-                                        int* errno_) {
+static int _netns_if_nametoindex(int netns, const char* ifname, unsigned int* index, int* errno_) {
   if (netns_set(netns)) {
     fprintf(stderr, "netns_set(%d) failed: %s\n", netns, strerror(errno));
     goto error;
   }
   *index = if_nametoindex(ifname);
   if (*index <= 0) {
-    fprintf(stderr, "if_nametoindex(%s) failed: %s\n", ifname, strerror(errno));
+    fprintf(stderr, "if_nametoindex(\"%s\") failed: %s\n", ifname, strerror(errno));
     goto error;
   }
   return 0;
@@ -41,6 +41,15 @@ error:
 }
 
 long netns_if_nametoindex(int netns, const char* ifname) {
+  if (try(netns_is_current(netns))) {
+    unsigned int index = if_nametoindex(ifname);
+    if (index <= 0) {
+      fprintf(stderr, "if_nametoindex(\"%s\") failed: %s\n", ifname, strerror(errno));
+      return -errno;
+    }
+    return index;
+  }
+
   int result = 0;
 
   struct {
@@ -76,4 +85,13 @@ cleanup:;
   munmap(shm, sizeof(*shm));
   errno = tmp_errno;
   return result;
+}
+
+int netns_is_current(int netns) {
+  struct stat current_ns_stat, fd_ns_stat;
+
+  try(stat("/proc/self/ns/net", &current_ns_stat), "stat failed: %s", strerror(errno));
+  try(fstat(netns, &fd_ns_stat), "fstat failed: %s", strerror(errno));
+
+  return (current_ns_stat.st_ino == fd_ns_stat.st_ino);
 }
