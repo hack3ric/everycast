@@ -4,7 +4,7 @@ headers := $(wildcard src/*.h)
 
 CFLAGS += -Wall -Wextra -std=gnu99
 
-MODE ?=
+MODE ?= debug
 ifeq ($(MODE), debug)
 CFLAGS += -O0 -g
 else ifeq ($(MODE), release)
