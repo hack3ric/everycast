@@ -9,12 +9,12 @@ struct args {
   enum { CMD_NULL, CMD_RUN } cmd;
   union {
     struct run_args {
-      ip_addr_t anycasts[16];
-      size_t anycasts_len;
+      ip_addr_t anycast[16];
+      size_t anycast_count;
 #define PEERS_MAX_LEN 16
-      ip_addr_t peers[PEERS_MAX_LEN];
-      uint8_t peer_prefixes[PEERS_MAX_LEN];
-      size_t peers_len;
+      ip_addr_t peer[PEERS_MAX_LEN];
+      uint8_t peer_len[PEERS_MAX_LEN];
+      size_t peer_count;
     } run;
   };
 };

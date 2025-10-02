@@ -7,20 +7,20 @@
 #include "try.h"
 
 static int run(struct run_args* args) {
-  for (size_t i = 0; i < args->anycasts_len; i++) {
+  for (size_t i = 0; i < args->anycast_count; i++) {
     char buf[INET6_ADDRSTRLEN];
-    const char* ip_str = try_p2(ip_stringify(args->anycasts[i], buf, sizeof(buf)));
+    const char* ip_str = try_p2(ip_stringify(args->anycast[i], buf, sizeof(buf)));
     printf("anycast: %s\n", ip_str);
   }
 
-for (size_t i = 0; i < args->peers_len; i++) {
+for (size_t i = 0; i < args->peer_count; i++) {
     char buf[INET6_ADDRSTRLEN];
-    const char* ip_str = try_p2(ip_stringify(args->peers[i], buf, sizeof(buf)));
-    printf("peer: %s/%u\n", ip_str, args->peer_prefixes[i]);
+    const char* ip_str = try_p2(ip_stringify(args->peer[i], buf, sizeof(buf)));
+    printf("peer: %s/%u\n", ip_str, args->peer_len[i]);
   }
 
   struct net_state net_state;
-  try(net_init(&net_state));
+  try(net_init(&net_state, args));
 
   printf("entering debug shell\n");
   system("/bin/bash");
@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
 
   switch (args.cmd) {
     case CMD_RUN:
-      return -run(&args.run);
+      return run(&args.run);
     default:
       break;
   }

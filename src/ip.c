@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <assert.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <stdbool.h>
@@ -44,7 +45,7 @@ int ip_parse_with_prefix(char* str, ip_addr_t* ip, uint8_t* prefix_len) {
   long prefix_len_ = strtol(prefix_str, &endptr, 10);
   bool str_mapped_ipv4 = str_af == AF_INET6 && ip_proto(*ip) == AF_INET;
 
-  if (prefix_len_ <= 0 || prefix_len_ > ip_proto_max_prefix(str_af) || *endptr != '\0' ||
+  if (prefix_len_ < 0 || prefix_len_ > ip_proto_max_prefix(str_af) || *endptr != '\0' ||
       (str_mapped_ipv4 && prefix_len_ < 96)) {
     fprintf(stderr, "invalid prefix length: %s\n", prefix_str);
     return -(errno = EINVAL);
@@ -61,9 +62,9 @@ int ip_parse_prefix(char* str, ip_addr_t* prefix, uint8_t* len) {
 
   bool prefix_v4_valid = (ntohl(prefix->v4) & ((1ul << (32 - *len)) - 1)) == 0;
   bool prefix_v6_valid =
-    (*len > 64 && prefix->v6_addr64[0] == 0 &&
-     (ntohll(prefix->v6_addr64[1]) & ((1ul << (128 - 64 + *len)) - 1)) == 0) ||
-    (*len <= 64 && (ntohll(prefix->v6_addr64[1]) & ((1ul << (128 - *len)) - 1)) == 0);
+    (*len <= 64 && prefix->v6_addr64[1] == 0 &&
+     (ntohll(prefix->v6_addr64[0]) & ((1ul << (64 - *len)) - 1)) == 0) ||
+    (*len > 64 && (ntohll(prefix->v6_addr64[1]) & ((1ul << (128 - *len + 64)) - 1)) == 0);
   bool prefix_valid = (ip_proto(*prefix) == AF_INET && prefix_v4_valid) ||
                       (ip_proto(*prefix) == AF_INET6 && prefix_v6_valid);
 
@@ -77,6 +78,11 @@ int ip_parse_prefix(char* str, ip_addr_t* prefix, uint8_t* len) {
   return 0;
 }
 
-const char* ip_stringify(ip_addr_t ip, char* dst, size_t size) {
-  return try2_p2(inet_ntop(ip_proto(ip), ip_buf(&ip), dst, size));
+void ip_prefix_select_two(ip_addr_t prefix, uint8_t len, ip_addr_t* ip1, ip_addr_t* ip2) {
+  assert(len < ip_max_prefix(prefix));
+  // TODO: assert it is actually prefix
+  int offset = len == ip_max_prefix(prefix) - 1 ? 0 : 1;
+  *ip1 = *ip2 = prefix;
+  ip1->v6_addr8[15] += offset;
+  ip2->v6_addr8[15] += offset + 1;
 }

@@ -19,21 +19,21 @@ static inline error_t run_args_parse_opt(int key, char* arg, struct argp_state* 
   struct run_args* args = (typeof(args))state->input;
   switch (key) {
     case 'a':
-      if (args->anycasts_len >= ARRAY_LEN(args->anycasts)) {
-        fprintf(stderr, "anycast IP count exceeds maximum of %lu\n", ARRAY_LEN(args->anycasts));
+      if (args->anycast_count >= ARRAY_LEN(args->anycast)) {
+        fprintf(stderr, "anycast IP count exceeds maximum of %lu\n", ARRAY_LEN(args->anycast));
         return -(errno = E2BIG);
       }
-      try(ip_parse(arg, &args->anycasts[args->anycasts_len]), "not a valid IP address: %s", arg);
-      args->anycasts_len++;
+      try(ip_parse(arg, &args->anycast[args->anycast_count]), "not a valid IP address: %s", arg);
+      args->anycast_count++;
       break;
     case 'p':
-      if (args->peers_len >= PEERS_MAX_LEN) {
+      if (args->peer_count >= PEERS_MAX_LEN) {
         fprintf(stderr, "anycast IP count exceeds maximum of %d\n", PEERS_MAX_LEN);
         return -(errno = E2BIG);
       }
-      size_t len = args->peers_len;
-      try(ip_parse_prefix(arg, &args->peers[len], &args->peer_prefixes[len]));
-      args->peers_len++;
+      size_t len = args->peer_count;
+      try(ip_parse_prefix(arg, &args->peer[len], &args->peer_len[len]));
+      args->peer_count++;
       break;
     default:
       return ARGP_ERR_UNKNOWN;

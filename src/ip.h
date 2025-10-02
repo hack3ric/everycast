@@ -1,10 +1,13 @@
 #ifndef EVERYCAST_IP_H
 #define EVERYCAST_IP_H
 
+#include <arpa/inet.h>
 #include <linux/types.h>
 #include <netinet/in.h>
 #include <stdint.h>
 #include <sys/socket.h>
+
+#include "try.h"
 
 typedef union ip_addr {
   struct in6_addr v6;
@@ -64,6 +67,11 @@ static inline ip_addr_t ip_canonicalize(ip_addr_t ip) {
 int ip_parse(const char* ip_str, ip_addr_t* ip);
 int ip_parse_with_prefix(char* str, ip_addr_t* ip, uint8_t* prefix_len);
 int ip_parse_prefix(char* str, ip_addr_t* prefix, uint8_t* len);
-const char* ip_stringify(ip_addr_t ip, char* dst, size_t size);
+
+static inline const char* ip_stringify(ip_addr_t ip, char* dst, size_t size) {
+  return try2_p2(inet_ntop(ip_proto(ip), ip_buf(&ip), dst, size));
+}
+
+void ip_prefix_select_two(ip_addr_t prefix, uint8_t len, ip_addr_t* ip1, ip_addr_t* ip2);
 
 #endif  // EVERYCAST_IP_H

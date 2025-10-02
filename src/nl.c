@@ -98,16 +98,16 @@ int rtnl_link_set_up(int rtnl, const char* ifname) {
   return try(nl_send_simple(rtnl, req));
 }
 
-int rtnl_link_add_addr(int rtnl, unsigned int ifindex, ip_addr_t ip, uint8_t prefix) {
+int rtnl_link_add_addr(int rtnl, const char* ifname, ip_addr_t ip, uint8_t prefix) {
   struct nl_req* req = nl_req_addr_alloca(256);
   req->n.nlmsg_type = RTM_NEWADDR;
   req->n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
   req->a.ifa_family = ip_proto(ip);
   req->a.ifa_prefixlen = prefix;
-  req->a.ifa_index = ifindex;
 
   nl_attr(req, IFA_LOCAL, ip_buf(&ip), ip_buf_len(ip));
   nl_attr(req, IFA_ADDRESS, ip_buf(&ip), ip_buf_len(ip));
+  try(nl_str(req, IFLA_IFNAME, ifname));
 
   return try(nl_send_simple(rtnl, req));
 }

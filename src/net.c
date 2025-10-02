@@ -1,61 +1,44 @@
 #include <stdint.h>
 #include <unistd.h>
 
+#include "args.h"
 #include "ip.h"
 #include "net.h"
 #include "netns.h"
 #include "nl.h"
 #include "try.h"
 
-int net_init(struct net_state* s) {
+int net_init(struct net_state* s, const struct run_args* args) {
   int result = 0;
-  s->rtnl = s->host_netns = s->netns = -1;
-  s->host_veth_ifname = "veth53";
-  s->veth_ifname = "eth0";
-  s->dummy_ifname = "eth1";
+  s->host_rtnl = s->rtnl = s->host_netns = s->netns = -1;
+  s->host_veth = "veth53";
+  s->veth = "eth0";
+  s->dummy = "eth1";
 
   s->host_rtnl = try3(rtnl_socket());
   try3(netns_create(&s->host_netns, &s->netns));
   s->rtnl = try3(rtnl_socket());
 
-  try3(rtnl_create_veth_pair(s->rtnl, s->host_veth_ifname, s->veth_ifname));
-  try3(rtnl_move_if_to_netns(s->rtnl, s->host_veth_ifname, s->host_netns));
-  try3(rtnl_create_dummy(s->rtnl, s->dummy_ifname));
+  try3(rtnl_create_veth_pair(s->rtnl, s->host_veth, s->veth));
+  try3(rtnl_move_if_to_netns(s->rtnl, s->host_veth, s->host_netns));
+  try3(rtnl_create_dummy(s->rtnl, s->dummy));
 
-  const ip_addr_t host_ip1 = {.v4_marker = 0xffff, .v4_addr8 = {172, 17, 53, 1}};
-  const uint8_t host_prefix1 = 24;
-  const ip_addr_t host_ip2 = {.v6_addr8 = {0xfc, 0x53, 0x53, 0x53, 0x53, 0x53, 0x53, 0x53, 0, 0, 0,
-                                           0, 0, 0, 0, 0x1}};  // fc53:5353:5353:5353::1
-  const uint8_t host_prefix2 = 64;
+  for (size_t i = 0; i < args->peer_count; i++) {
+    ip_addr_t host_ip, ip;
+    ip_prefix_select_two(args->peer[i], args->peer_len[i], &host_ip, &ip);
+    try3(rtnl_link_add_addr(s->host_rtnl, s->host_veth, host_ip, args->peer_len[i]));
+    try3(rtnl_link_add_addr(s->rtnl, s->veth, ip, args->peer_len[i]));
+  }
 
-  unsigned int host_ifindex = try3(netns_if_nametoindex(s->host_netns, s->host_veth_ifname));
-  try3(rtnl_link_add_addr(s->host_rtnl, host_ifindex, host_ip1, host_prefix1));
-  try3(rtnl_link_add_addr(s->host_rtnl, host_ifindex, host_ip2, host_prefix2));
+  for (size_t i = 0; i < args->anycast_count; i++) {
+    ip_addr_t ip = args->anycast[i];
+    try3(rtnl_link_add_addr(s->rtnl, s->dummy, ip, ip_max_prefix(ip)));
+  }
 
-  const ip_addr_t ip1 = {.v4_marker = 0xffff, .v4_addr8 = {172, 17, 53, 53}};
-  const uint8_t prefix1 = 24;
-  const ip_addr_t ip2 = {.v6_addr8 = {0xfc, 0x53, 0x53, 0x53, 0x53, 0x53, 0x53, 0x53, 0, 0, 0, 0, 0,
-                                      0, 0, 0x53}};  // fc53:5353:5353:5353::53
-  const uint8_t prefix2 = 64;
-
-  unsigned int ifindex = try3(netns_if_nametoindex(s->netns, s->veth_ifname));
-  try3(rtnl_link_add_addr(s->rtnl, ifindex, ip1, prefix1));
-  try3(rtnl_link_add_addr(s->rtnl, ifindex, ip2, prefix2));
-
-  const ip_addr_t dummy_ip1 = {.v4_marker = 0xffff, .v4_addr8 = {172, 23, 13, 126}};
-  const uint8_t dummy_prefix1 = 32;
-  const ip_addr_t dummy_ip2 = {.v6_addr8 = {0xfd, 0xfd, 0x4a, 0xcc, 0, 0xe2, 0, 0x53, 0, 0, 0, 0, 0,
-                                            0, 0, 0x53}};  // fdfd:4acc:e2:53::53
-  const uint8_t dummy_prefix2 = 128;
-
-  unsigned int dummy_ifindex = try3(netns_if_nametoindex(s->netns, s->dummy_ifname));
-  try3(rtnl_link_add_addr(s->rtnl, dummy_ifindex, dummy_ip1, dummy_prefix1));
-  try3(rtnl_link_add_addr(s->rtnl, dummy_ifindex, dummy_ip2, dummy_prefix2));
-
-  try3(rtnl_link_set_up(s->host_rtnl, s->host_veth_ifname));
+  try3(rtnl_link_set_up(s->host_rtnl, s->host_veth));
   try3(rtnl_link_set_up(s->rtnl, "lo"));
-  try3(rtnl_link_set_up(s->rtnl, s->veth_ifname));
-  try3(rtnl_link_set_up(s->rtnl, s->dummy_ifname));
+  try3(rtnl_link_set_up(s->rtnl, s->veth));
+  try3(rtnl_link_set_up(s->rtnl, s->dummy));
 
   result = 0;
   goto success;
