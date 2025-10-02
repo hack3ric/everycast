@@ -1,5 +1,6 @@
 src := $(wildcard src/*.c)
-obj := $(src:.c=.o)
+obj := $(src:src/%.c=out/%.o)
+dep := $(obj:.o=.d)
 headers := $(wildcard src/*.h)
 
 CFLAGS += -Wall -Wextra -std=gnu99
@@ -29,13 +30,17 @@ all: build
 .PHONY: build
 build: out/everycast
 
-$(filter src/%.o, $(obj)): src/%.o: $(headers) $(check_options)
-
 out/everycast: $(obj)
-	$(mkdir_p)
+	@$(mkdir_p)
 	$(CC) $(CFLAGS) $(obj) -o $@ $(LDFLAGS)
+
+-include $(dep)
+$(obj): out/%.o: src/%.c $(check_options)
+	@$(mkdir_p)
+	$(CC) $(CFLAGS) -MMD -c $(filter %.c,$<) -o $@
 
 .PHONY: clean
 clean:
 	rm -rf out
 	find . -type f -name *.o -delete
+	find . -type f -name *.d -delete
