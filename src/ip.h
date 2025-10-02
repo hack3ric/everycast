@@ -62,6 +62,8 @@ static inline ip_addr_t ip_canonicalize(ip_addr_t ip) {
 }
 
 int ip_parse(const char* ip_str, ip_addr_t* ip);
-int ip_parse_with_prefix(char* str, ip_addr_t* ip, uint8_t* prefix);
+int ip_parse_with_prefix(char* str, ip_addr_t* ip, uint8_t* prefix_len);
+int ip_parse_prefix(char* str, ip_addr_t* prefix, uint8_t* len);
+const char* ip_stringify(ip_addr_t ip, char* dst, size_t size);
 
 #endif  // EVERYCAST_IP_H

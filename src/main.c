@@ -1,22 +1,43 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "defs.h"
+#include "args.h"
+#include "ip.h"
 #include "net.h"
 #include "try.h"
 
-int main(int argc, char** argv) {
-  UNUSED(argc);
-  UNUSED(argv);
+static int run(struct run_args* args) {
+  for (size_t i = 0; i < args->anycasts_len; i++) {
+    char buf[INET6_ADDRSTRLEN];
+    const char* ip_str = try_p2(ip_stringify(args->anycasts[i], buf, sizeof(buf)));
+    printf("anycast: %s\n", ip_str);
+  }
+
+for (size_t i = 0; i < args->peers_len; i++) {
+    char buf[INET6_ADDRSTRLEN];
+    const char* ip_str = try_p2(ip_stringify(args->peers[i], buf, sizeof(buf)));
+    printf("peer: %s/%u\n", ip_str, args->peer_prefixes[i]);
+  }
 
   struct net_state net_state;
   try(net_init(&net_state));
 
-  printf("host netns = %d, netns = %d\n", net_state.host_netns, net_state.netns);
   printf("entering debug shell\n");
   system("/bin/bash");
 
   net_destroy(&net_state);
+  return 0;
+}
 
+int main(int argc, char** argv) {
+  struct args args = {};
+  try(parse_args(&args, argc, argv));
+
+  switch (args.cmd) {
+    case CMD_RUN:
+      return -run(&args.run);
+    default:
+      break;
+  }
   return 0;
 }

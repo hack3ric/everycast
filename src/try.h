@@ -30,21 +30,21 @@
     retval, __VA_ARGS__)
 #define _cleanup_0(retval, _0) \
   ({                           \
-    result = (retval);           \
-    goto cleanup;                \
+    result = (retval);         \
+    goto cleanup;              \
   })
 #define _cleanup_1(retval, _0, ...) \
   ({                                \
     fprintf(stderr, __VA_ARGS__);   \
     fprintf(stderr, "\n");          \
-    result = (retval);                \
-    goto cleanup;                     \
+    result = (retval);              \
+    goto cleanup;                   \
   })
 
 // Used when errno is stored in `errno` declared in <errno.h>.
 #define _try(retdef, retval, stmt, ...)             \
   ({                                                \
-    int64_t ret = (stmt);                             \
+    int64_t ret = (stmt);                           \
     if (ret < 0) retdef(retval, _0, ##__VA_ARGS__); \
     ret;                                            \
   })
@@ -52,7 +52,7 @@
 // Used when errno is stored negatively in return value.
 #define _try_e(retdef, retval, stmt, ...) \
   ({                                      \
-    int64_t ret = (stmt);                   \
+    int64_t ret = (stmt);                 \
     if (ret < 0) {                        \
       errno = -ret;                       \
       retdef(retval, _0, ##__VA_ARGS__);  \
@@ -63,7 +63,15 @@
 // Used when return value of statement is a pointer, and errno is stored in `errno`.
 #define _try_p(retdef, retval, stmt, ...)        \
   ({                                             \
-    void* ret = (stmt);                            \
+    void* ret = (stmt);                          \
+    if (!ret) retdef(retval, _0, ##__VA_ARGS__); \
+    ret;                                         \
+  })
+
+// Used when return value of statement is a const pointer, and errno is stored in `errno`.
+#define _try_p2(retdef, retval, stmt, ...)       \
+  ({                                             \
+    const void* ret = (stmt);                    \
     if (!ret) retdef(retval, _0, ##__VA_ARGS__); \
     ret;                                         \
   })
@@ -72,21 +80,25 @@
 #define try(stmt, ...) _try(_ret, -errno, stmt, ##__VA_ARGS__)
 #define try_e(stmt, ...) _try_e(_ret, -errno, stmt, ##__VA_ARGS__)
 #define try_p(stmt, ...) _try_p(_ret, -errno, stmt, ##__VA_ARGS__)
+#define try_p2(stmt, ...) _try_p2(_ret, -errno, stmt, ##__VA_ARGS__)
 
 // try2, try2_*: parent returns pointer
 #define try2(stmt, ...) _try(_ret, NULL, stmt, ##__VA_ARGS__)
 #define try2_e(stmt, ...) _try_e(_ret, NULL, stmt, ##__VA_ARGS__)
 #define try2_p(stmt, ...) _try_p(_ret, NULL, stmt, ##__VA_ARGS__)
+#define try2_p2(stmt, ...) _try_p2(_ret, NULL, stmt, ##__VA_ARGS__)
 
 // try3, try3_*: parent contains `cleanup` label and returns int
 #define try3(stmt, ...) _try(_cleanup, -errno, stmt, ##__VA_ARGS__)
 #define try3_e(stmt, ...) _try_e(_cleanup, -errno, stmt, ##__VA_ARGS__)
 #define try3_p(stmt, ...) _try_p(_cleanup, -errno, stmt, ##__VA_ARGS__)
+#define try3_p2(stmt, ...) _try_p2(_cleanup, -errno, stmt, ##__VA_ARGS__)
 
 // try4, try4_*: parent contains `cleanup` label and returns pointer
 #define try4(stmt, ...) _try(_cleanup, NULL, stmt, ##__VA_ARGS__)
 #define try4_e(stmt, ...) _try_e(_cleanup, NULL, stmt, ##__VA_ARGS__)
 #define try4_p(stmt, ...) _try_p(_cleanup, NULL, stmt, ##__VA_ARGS__)
+#define try4_p2(stmt, ...) _try_p2(_cleanup, NULL, stmt, ##__VA_ARGS__)
 
 #define try_open(path, flags) try(open(path, flags), "cannot open " path ": %s", strerror(errno))
 #define try2_open(path, flags) try2(open(path, flags), "cannot open " path ": %s", strerror(errno))
