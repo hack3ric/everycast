@@ -22,7 +22,7 @@ int nl_send_simple(struct mnl_socket* sock, struct nlmsghdr* req) {
   try(mnl_socket_sendto(sock, req, req->nlmsg_len), "netlink sendto failed: %s", strerror(errno));
   size_t recv_len = try(mnl_socket_recvfrom(sock, buf, sizeof(buf)), "netlink recvfrom failed: %s",
                         strerror(errno));
-  try(mnl_cb_run(buf, recv_len, req->nlmsg_seq, mnl_socket_get_portid(sock), NULL, NULL),
+  try(mnl_cb_run(buf, recv_len, req->nlmsg_seq, 0, NULL, NULL),
       "netlink request failed: %s", strerror(errno));
   return 0;
 }

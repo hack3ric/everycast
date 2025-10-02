@@ -15,16 +15,17 @@ int net_init(struct net_state* s, const struct run_args* args) {
   s->veth = "eth0";
   s->dummy = "eth1";
 
-  s->host_rtnl = try3_p(mnl_socket_open(NETLINK_ROUTE));
-  try3(mnl_socket_bind(s->host_rtnl, 0, MNL_SOCKET_AUTOPID));
+  s->host_rtnl = try3_p(mnl_socket_open(NETLINK_ROUTE),
+                        "failed to create host rtnetlink socket: %s", strerror(errno));
 
   try3(netns_create(&s->host_netns, &s->netns));
-  s->rtnl = try3_p(mnl_socket_open(NETLINK_ROUTE));
-  try3(mnl_socket_bind(s->rtnl, 0, MNL_SOCKET_AUTOPID));
+  s->rtnl = try3_p(mnl_socket_open(NETLINK_ROUTE),
+                   "failed to create rtnetlink socket inside netns: %s", strerror(errno));
 
-  try3(rtnl_create_veth_pair(s->rtnl, s->host_veth, s->veth));
-  try3(rtnl_move_if_to_netns(s->rtnl, s->host_veth, s->host_netns));
-  try3(rtnl_create_dummy(s->rtnl, s->dummy), "no?");
+  try3(rtnl_create_veth_pair(s->rtnl, s->host_veth, s->veth), "failed to create veth pair");
+  try3(rtnl_move_if_to_netns(s->rtnl, s->host_veth, s->host_netns),
+       "failed to move veth to host netns");
+  try3(rtnl_create_dummy(s->rtnl, s->dummy), "failed to create dummy link");
 
   s->host_veth_idx = try3(netns_if_nametoindex(s->host_netns, s->host_veth));
   s->veth_idx = try3(netns_if_nametoindex(s->netns, s->veth));

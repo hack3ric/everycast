@@ -31,7 +31,7 @@ static int _netns_if_nametoindex(int netns, const char* ifname, unsigned int* in
   }
   *index = if_nametoindex(ifname);
   if (*index <= 0) {
-    fprintf(stderr, "if_nametoindex(\"%s\") failed: %s\n", ifname, strerror(errno));
+    fprintf(stderr, "failed to get index of interface %s: %s\n", ifname, strerror(errno));
     goto error;
   }
   return 0;
@@ -44,7 +44,7 @@ long netns_if_nametoindex(int netns, const char* ifname) {
   if (try(netns_is_current(netns))) {
     unsigned int index = if_nametoindex(ifname);
     if (index <= 0) {
-      fprintf(stderr, "if_nametoindex(\"%s\") failed: %s\n", ifname, strerror(errno));
+      fprintf(stderr, "failed to get index of interface %s: %s\n", ifname, strerror(errno));
       return -errno;
     }
     return index;
@@ -72,7 +72,7 @@ long netns_if_nametoindex(int netns, const char* ifname) {
         result = shm->index;
         goto cleanup;
       }
-      fprintf(stderr, "subprocess failed with errno %d: %s\n", code, strerror(shm->errno_));
+      // fprintf(stderr, "subprocess failed with errno %d: %s\n", code, strerror(shm->errno_));
       result = -(errno = shm->errno_);
     } else {
       fprintf(stderr, "subprocess failed with signal %d\n", WTERMSIG(wstatus));
