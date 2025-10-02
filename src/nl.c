@@ -1,113 +1,128 @@
-#include <errno.h>
+#include <libmnl/libmnl.h>
 #include <linux/if_addr.h>
 #include <linux/if_link.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/veth.h>
 #include <net/if.h>
+#include <stdatomic.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 
-#include "nl.h"
 #include "ip.h"
+#include "nl.h"
 #include "try.h"
 
-int nl_attr(struct nl_req* req, int type, const void* data, size_t alen) {
-  int len = RTA_LENGTH(alen);
-  if (NLMSG_ALIGN(req->n.nlmsg_len) + RTA_ALIGN(len) > req->len) {
-    fprintf(stderr, "nl_attr: message exceeded bound of %lu\n", req->len);
-    return -(errno = E2BIG);
-  }
+_Atomic uint32_t nl_seq_counter = 0;
 
-  struct rtattr* rta = NLMSG_TAIL(&req->n);
-  rta->rta_len = len;
-  rta->rta_type = type;
-  if (alen) memcpy(RTA_DATA(rta), data, alen);
-  req->n.nlmsg_len = NLMSG_ALIGN(req->n.nlmsg_len) + RTA_ALIGN(len);
+int nl_send_simple(struct mnl_socket* sock, struct nlmsghdr* req) {
+  char buf[256];
+  try(mnl_socket_sendto(sock, req, req->nlmsg_len), "netlink sendto failed: %s", strerror(errno));
+  size_t recv_len = try(mnl_socket_recvfrom(sock, buf, sizeof(buf)), "netlink recvfrom failed: %s",
+                        strerror(errno));
+  try(mnl_cb_run(buf, recv_len, req->nlmsg_seq, mnl_socket_get_portid(sock), NULL, NULL),
+      "netlink request failed: %s", strerror(errno));
   return 0;
 }
 
-int nl_send_simple(int sock, struct nl_req* req) {
-  req->n.nlmsg_flags |= NLM_F_ACK;
-  try(send(sock, &req->n, req->n.nlmsg_len, 0), "send failed: %s", strerror(errno));
+int rtnl_create_veth_pair(struct mnl_socket* rtnl, const char* ifname, const char* peername) {
+  char buf[256];
 
-  char buf[NLMSG_LENGTH(sizeof(struct nlmsgerr))];
-  try(recv(sock, buf, sizeof(buf), 0), "recv failed: %s", strerror(errno));
-  struct nlmsghdr* nlh = (typeof(nlh))buf;
+  struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
+  nlh->nlmsg_type = RTM_NEWLINK;
+  nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK;
+  nlh->nlmsg_seq = atomic_fetch_add(&nl_seq_counter, 1);
 
-  if (nlh->nlmsg_type == NLMSG_ERROR) {
-    struct nlmsgerr* err = NLMSG_DATA(nlh);
-    if (err->error != 0) {
-      fprintf(stderr, "netlink error: %s\n", strerror(-err->error));
-      return -(errno = -err->error);
-    }
-  }
+  struct ifinfomsg* ifi = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifi));
+  ifi->ifi_family = AF_UNSPEC;
+  ifi->ifi_change = 0xffffffff;
 
-  return 0;
+  struct nlattr* linkinfo = try_mnl_attr_nest_start_check(nlh, sizeof(buf), IFLA_LINKINFO);
+  struct nlattr* data = try_mnl_attr_nest_start_check(nlh, sizeof(buf), IFLA_INFO_DATA);
+  struct nlattr* peer_linkinfo = try_mnl_attr_nest_start_check(nlh, sizeof(buf), VETH_INFO_PEER);
+
+  struct ifinfomsg* peer_ifi = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifi));
+  peer_ifi->ifi_family = AF_UNSPEC;
+  peer_ifi->ifi_change = 0xffffffff;
+  try_mnl_attr_put_strz_check(nlh, sizeof(buf), IFLA_IFNAME, peername);
+
+  mnl_attr_nest_end(nlh, peer_linkinfo);
+  mnl_attr_nest_end(nlh, data);
+  try_mnl_attr_put_strz_check(nlh, sizeof(buf), IFLA_INFO_KIND, "veth");
+  mnl_attr_nest_end(nlh, linkinfo);
+  try_mnl_attr_put_strz_check(nlh, sizeof(buf), IFLA_IFNAME, ifname);
+
+  return try(nl_send_simple(rtnl, nlh));
 }
 
-int rtnl_create_veth_pair(int rtnl, const char* ifname, const char* peername) {
-  struct nl_req* req = nl_req_link_alloca(256);
-  req->n.nlmsg_type = RTM_NEWLINK;
-  req->n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
-  req->i.ifi_change = 0xffffffff;
+int rtnl_create_dummy(struct mnl_socket* rtnl, const char* ifname) {
+  char buf[256];
 
-  try(nl_str(req, IFLA_IFNAME, ifname));
-  nl_nest(req, IFLA_LINKINFO, {
-    try(nl_str(req, IFLA_INFO_KIND, "veth"));
-    nl_nest(req, IFLA_INFO_DATA, {
-      nl_nest(req, VETH_INFO_PEER, {
-        struct ifinfomsg* peer_msg = RTA_DATA(it);
-        req->n.nlmsg_len += sizeof(*peer_msg);
-        peer_msg->ifi_family = AF_UNSPEC;
-        peer_msg->ifi_change = 0xffffffff;
-        try(nl_str(req, IFLA_IFNAME, peername));
-      });
-    });
-  });
+  struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
+  nlh->nlmsg_type = RTM_NEWLINK;
+  nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK;
+  nlh->nlmsg_seq = atomic_fetch_add(&nl_seq_counter, 1);
 
-  return try(nl_send_simple(rtnl, req));
+  struct ifinfomsg* ifi = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifi));
+  ifi->ifi_family = AF_UNSPEC;
+  ifi->ifi_change = 0xffffffff;
+
+  try_mnl_attr_put_strz_check(nlh, sizeof(buf), IFLA_IFNAME, ifname);
+  struct nlattr* linkinfo = try_mnl_attr_nest_start_check(nlh, sizeof(buf), IFLA_LINKINFO);
+  try_mnl_attr_put_strz_check(nlh, sizeof(buf), IFLA_INFO_KIND, "dummy");
+  mnl_attr_nest_end(nlh, linkinfo);
+
+  return try(nl_send_simple(rtnl, nlh));
 }
 
-int rtnl_create_dummy(int rtnl, const char* ifname) {
-  struct nl_req* req = nl_req_link_alloca(256);
-  req->n.nlmsg_type = RTM_NEWLINK;
-  req->n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
-  req->i.ifi_change = 0xffffffff;
-  try(nl_str(req, IFLA_IFNAME, ifname));
-  nl_nest(req, IFLA_LINKINFO, try(nl_str(req, IFLA_INFO_KIND, "dummy")));
-  return try(nl_send_simple(rtnl, req));
+int rtnl_move_if_to_netns(struct mnl_socket* rtnl, const char* ifname, int netns) {
+  char buf[128];
+
+  struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
+  nlh->nlmsg_type = RTM_SETLINK;
+  nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+  nlh->nlmsg_seq = atomic_fetch_add(&nl_seq_counter, 1);
+
+  struct ifinfomsg* ifi = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifi));
+
+  try_mnl_attr_put_strz_check(nlh, sizeof(buf), IFLA_IFNAME, ifname);
+  try_mnl_attr_put_u32_check(nlh, sizeof(buf), IFLA_NET_NS_FD, netns);
+  return try(nl_send_simple(rtnl, nlh));
 }
 
-int rtnl_move_if_to_netns(int rtnl, const char* ifname, int netns) {
-  struct nl_req* req = nl_req_link_alloca(128);
-  req->n.nlmsg_type = RTM_SETLINK;
-  req->n.nlmsg_flags = NLM_F_REQUEST;
-  try(nl_str(req, IFLA_IFNAME, ifname));
-  try(nl_int(req, IFLA_NET_NS_FD, netns));
-  return try(nl_send_simple(rtnl, req));
+int rtnl_link_set_up(struct mnl_socket* rtnl, const char* ifname) {
+  char buf[128];
+
+  struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
+  nlh->nlmsg_type = RTM_SETLINK;
+  nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+  nlh->nlmsg_seq = atomic_fetch_add(&nl_seq_counter, 1);
+
+  struct ifinfomsg* ifi = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifi));
+  ifi->ifi_flags = ifi->ifi_change = IFF_UP;
+
+  try_mnl_attr_put_strz_check(nlh, sizeof(buf), IFLA_IFNAME, ifname);
+  return try(nl_send_simple(rtnl, nlh));
 }
 
-int rtnl_link_set_up(int rtnl, const char* ifname) {
-  struct nl_req* req = nl_req_link_alloca(128);
-  req->n.nlmsg_type = RTM_SETLINK;
-  req->n.nlmsg_flags = NLM_F_REQUEST;
-  req->i.ifi_flags = req->i.ifi_change = IFF_UP;
-  try(nl_str(req, IFLA_IFNAME, ifname));
-  return try(nl_send_simple(rtnl, req));
-}
+int rtnl_link_add_addr(struct mnl_socket* rtnl, uint32_t ifindex, ip_addr_t ip, uint8_t prefix) {
+  char buf[256];
 
-int rtnl_link_add_addr(int rtnl, const char* ifname, ip_addr_t ip, uint8_t prefix) {
-  struct nl_req* req = nl_req_addr_alloca(256);
-  req->n.nlmsg_type = RTM_NEWADDR;
-  req->n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
-  req->a.ifa_family = ip_proto(ip);
-  req->a.ifa_prefixlen = prefix;
+  struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
+  nlh->nlmsg_type = RTM_NEWADDR;
+  nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK;
+  nlh->nlmsg_seq = atomic_fetch_add(&nl_seq_counter, 1);
 
-  nl_attr(req, IFA_LOCAL, ip_buf(&ip), ip_buf_len(ip));
-  nl_attr(req, IFA_ADDRESS, ip_buf(&ip), ip_buf_len(ip));
-  try(nl_str(req, IFLA_IFNAME, ifname));
+  struct ifaddrmsg* ifa = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifa));
+  ifa->ifa_family = ip_proto(ip);
+  ifa->ifa_prefixlen = prefix;
+  ifa->ifa_index = ifindex;
+  ifa->ifa_flags = IFA_F_PERMANENT;
 
-  return try(nl_send_simple(rtnl, req));
+  try_mnl_attr_put_check(nlh, sizeof(buf), IFA_LOCAL, ip_buf_len(ip), ip_buf(&ip));
+  try_mnl_attr_put_check(nlh, sizeof(buf), IFA_ADDRESS, ip_buf_len(ip), ip_buf(&ip));
+
+  return try(nl_send_simple(rtnl, nlh));
 }

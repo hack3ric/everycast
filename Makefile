@@ -3,7 +3,7 @@ obj := $(src:src/%.c=out/%.o)
 dep := $(obj:.o=.d)
 headers := $(wildcard src/*.h)
 
-CFLAGS += -Wall -Wextra -std=gnu99
+CFLAGS := -Wall -Wextra -std=gnu99
 
 MODE ?= debug
 ifeq ($(MODE), debug)
@@ -11,6 +11,8 @@ CFLAGS += -O0 -g
 else ifeq ($(MODE), release)
 CFLAGS += -O2
 endif
+
+LDFLAGS += -lmnl
 
 # Rules
 

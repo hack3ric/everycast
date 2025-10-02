@@ -2,81 +2,46 @@
 #define EVERYCAST_NETLINK_H
 
 #include <errno.h>
-#include <linux/netlink.h>
-#include <linux/rtnetlink.h>
+#include <libmnl/libmnl.h>
 #include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
+#include <stdint.h>
 
 #include "ip.h"
 #include "try.h"
 
-#define NLMSG_TAIL(nmsg) ((struct rtattr*)(((void*)(nmsg)) + NLMSG_ALIGN((nmsg)->nlmsg_len)))
-
-struct nl_req {
-  size_t len;
-  struct nlmsghdr n;
-  union {
-    struct ifinfomsg i;
-    struct ifaddrmsg a;
-  };
-  // data follows (including part of union)
-};
-
-#define _nl_req_alloca(size, ilen)                                           \
-  ({                                                                         \
-    size_t total_size = (size) + sizeof(req->len) + sizeof(req->n) + (ilen); \
-    struct nl_req* req = alloca(total_size);                                 \
-    memset(req, 0, total_size);                                              \
-    req->len = total_size - sizeof(req->len);                                \
-    req->n.nlmsg_len = NLMSG_LENGTH(ilen);                                   \
-    req;                                                                     \
-  })
-#define nl_req_link_alloca(size) _nl_req_alloca(size, sizeof(struct ifinfomsg))
-#define nl_req_addr_alloca(size) _nl_req_alloca(size, sizeof(struct ifaddrmsg))
-
-int nl_attr(struct nl_req* req, int type, const void* data, size_t alen);
-
-static inline int nl_str(struct nl_req* req, int type, const char* data) {
-  return nl_attr(req, type, data, strlen(data) + 1);
-}
-
-#define _gen_nl_attr_typed(_type)                                          \
-  static inline int nl_##_type(struct nl_req* req, int type, _type data) { \
-    return nl_attr(req, type, &data, sizeof(data));                        \
-  }
-_gen_nl_attr_typed(int);
-
-static inline struct rtattr* nl_nest_start(struct nl_req* req, int type) {
-  struct rtattr* nest = NLMSG_TAIL(&req->n);
-  nl_attr(req, type, NULL, 0);
-  return nest;
-}
-
-static inline void nl_nest_end(struct nl_req* req, struct rtattr* nest) {
-  nest->rta_len = (void*)NLMSG_TAIL(&req->n) - (void*)nest;
-}
-
-#define nl_nest(req, type, block)                 \
-  ({                                              \
-    struct rtattr* it = nl_nest_start(req, type); \
-    block;                                        \
-    nl_nest_end(req, it);                         \
-    it;                                           \
+#define try_mnl(stmt)                                     \
+  ({                                                      \
+    bool ret = (stmt);                                    \
+    if (!ret) {                                           \
+      errno = E2BIG;                                      \
+      _ret(-E2BIG, _0, "netlink message exceeds buffer"); \
+    }                                                     \
+    ret;                                                  \
   })
 
-int nl_send_simple(int sock, struct nl_req* req);
+#define try_mnl_p(stmt)                                   \
+  ({                                                      \
+    void* ret = (stmt);                                   \
+    if (!ret) {                                           \
+      errno = E2BIG;                                      \
+      _ret(-E2BIG, _0, "netlink message exceeds buffer"); \
+    }                                                     \
+    ret;                                                  \
+  })
 
-static inline int rtnl_socket() {
-  return try(socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE), "failed to open rtnetlink socket: %s",
-             strerror(errno));
-}
+#define try_mnl_attr_put_check(...) try_mnl(mnl_attr_put_check(__VA_ARGS__))
+#define try_mnl_attr_put_strz_check(...) try_mnl(mnl_attr_put_strz_check(__VA_ARGS__))
+#define try_mnl_attr_put_u32_check(...) try_mnl(mnl_attr_put_u32_check(__VA_ARGS__))
+#define try_mnl_attr_nest_start_check(...) try_mnl_p(mnl_attr_nest_start_check(__VA_ARGS__))
 
-int rtnl_create_veth_pair(int rtnl, const char* ifname, const char* peername);
-int rtnl_create_dummy(int rtnl, const char* ifname);
-int rtnl_move_if_to_netns(int rtnl, const char* ifname, int netns);
-int rtnl_link_set_up(int rtnl, const char* ifname);
-int rtnl_link_add_addr(int rtnl, const char* ifname, ip_addr_t ip, uint8_t prefix);
+extern _Atomic uint32_t nl_seq_counter;
+
+int nl_send_simple(struct mnl_socket* sock, struct nlmsghdr* req);
+
+int rtnl_create_veth_pair(struct mnl_socket* rtnl, const char* ifname, const char* peername);
+int rtnl_create_dummy(struct mnl_socket* rtnl, const char* ifname);
+int rtnl_move_if_to_netns(struct mnl_socket* rtnl, const char* ifname, int netns);
+int rtnl_link_set_up(struct mnl_socket* rtnl, const char* ifname);
+int rtnl_link_add_addr(struct mnl_socket* rtnl, uint32_t ifindex, ip_addr_t ip, uint8_t prefix);
 
 #endif  // EVERYCAST_NETLINK_H
