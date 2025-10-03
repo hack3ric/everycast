@@ -1,3 +1,4 @@
+#include <alloca.h>
 #include <libmnl/libmnl.h>
 #include <linux/if_addr.h>
 #include <linux/if_link.h>
@@ -15,20 +16,60 @@
 #include "nl.h"
 #include "try.h"
 
-_Atomic uint32_t nl_seq_counter = 0;
+/* Generic netlink */
 
-int nl_send_simple(struct mnl_socket* sock, struct nlmsghdr* req) {
-  char buf[256];
-  try(mnl_socket_sendto(sock, req, req->nlmsg_len), "netlink sendto failed: %s", strerror(errno));
-  size_t recv_len = try(mnl_socket_recvfrom(sock, buf, sizeof(buf)), "netlink recvfrom failed: %s",
-                        strerror(errno));
-  try(mnl_cb_run(buf, recv_len, req->nlmsg_seq, 0, NULL, NULL),
-      "netlink request failed: %s", strerror(errno));
+_Atomic uint32_t nl_seq_counter = 1;
+
+struct mnl_socket* nl_open_simple(int bus) {
+  struct mnl_socket* sock =
+    try2_p(mnl_socket_open(bus), "failed to open netlink socket: %s", strerror(errno));
+  try4(mnl_socket_bind(sock, 0, MNL_SOCKET_AUTOPID), "failed to bind netlink socket: %s",
+       strerror(errno));
+  return sock;
+cleanup:
+  if (sock) mnl_socket_close(sock);
+  return NULL;
+}
+
+static int _nl_send(struct mnl_socket* sock, const void* req, size_t size) {
+  return try(mnl_socket_sendto(sock, req, size), "netlink sendto failed: %s", strerror(errno));
+}
+
+static int _nl_recv(struct mnl_socket* sock, unsigned int seq, char* buf, char buf_size,
+                    mnl_cb_t cb_data, void* data) {
+  ENSURE_BUF(buf, buf_size);
+  int len;
+  unsigned int portid = mnl_socket_get_portid(sock);
+  do {
+    len = try(mnl_socket_recvfrom(sock, buf, sizeof(buf)), "oh no");
+    int cb_status = try(mnl_cb_run(buf, len, seq, portid, cb_data, data),
+                        "netlink request failed: %s", strerror(errno));
+    if (cb_status <= MNL_CB_STOP) break;
+  } while (len > 0);
   return 0;
 }
 
+int nl_send(struct mnl_socket* sock, struct nlmsghdr* req, mnl_cb_t cb_data, void* data, char* buf,
+            size_t buf_size) {
+  ENSURE_BUF(buf, buf_size);
+  try(_nl_send(sock, req, req->nlmsg_len));
+  try(_nl_recv(sock, req->nlmsg_seq, buf, buf_size, cb_data, data));
+  return 0;
+}
+
+// Assuming all batch members that returns some value are using the same seq num
+int nl_send_batch(struct mnl_socket* sock, struct mnl_nlmsg_batch* batch, unsigned int seq,
+                  mnl_cb_t cb_data, void* data, char* buf, size_t buf_size) {
+  ENSURE_BUF(buf, buf_size);
+  try(_nl_send(sock, mnl_nlmsg_batch_head(batch), mnl_nlmsg_batch_size(batch)));
+  try(_nl_recv(sock, seq, buf, buf_size, cb_data, data));
+  return 0;
+}
+
+/* rtnetlink */
+
 int rtnl_create_veth_pair(struct mnl_socket* rtnl, const char* ifname, const char* peername) {
-  char buf[256];
+  char buf[MNL_SOCKET_BUFFER_SIZE];
 
   struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
   nlh->nlmsg_type = RTM_NEWLINK;
@@ -54,11 +95,11 @@ int rtnl_create_veth_pair(struct mnl_socket* rtnl, const char* ifname, const cha
   mnl_attr_nest_end(nlh, linkinfo);
   try_mnl_attr_put_strz_check(nlh, sizeof(buf), IFLA_IFNAME, ifname);
 
-  return try(nl_send_simple(rtnl, nlh));
+  return try(nl_send_ack(rtnl, nlh, buf, sizeof(buf)));
 }
 
 int rtnl_create_dummy(struct mnl_socket* rtnl, const char* ifname) {
-  char buf[256];
+  char buf[MNL_SOCKET_BUFFER_SIZE];
 
   struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
   nlh->nlmsg_type = RTM_NEWLINK;
@@ -74,11 +115,11 @@ int rtnl_create_dummy(struct mnl_socket* rtnl, const char* ifname) {
   try_mnl_attr_put_strz_check(nlh, sizeof(buf), IFLA_INFO_KIND, "dummy");
   mnl_attr_nest_end(nlh, linkinfo);
 
-  return try(nl_send_simple(rtnl, nlh));
+  return try(nl_send_ack(rtnl, nlh, buf, sizeof(buf)));
 }
 
 int rtnl_move_if_to_netns(struct mnl_socket* rtnl, const char* ifname, int netns) {
-  char buf[128];
+  char buf[MNL_SOCKET_BUFFER_SIZE];
 
   struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
   nlh->nlmsg_type = RTM_SETLINK;
@@ -89,7 +130,7 @@ int rtnl_move_if_to_netns(struct mnl_socket* rtnl, const char* ifname, int netns
 
   try_mnl_attr_put_strz_check(nlh, sizeof(buf), IFLA_IFNAME, ifname);
   try_mnl_attr_put_u32_check(nlh, sizeof(buf), IFLA_NET_NS_FD, netns);
-  return try(nl_send_simple(rtnl, nlh));
+  return try(nl_send_ack(rtnl, nlh, buf, sizeof(buf)));
 }
 
 int rtnl_link_set_up(struct mnl_socket* rtnl, const char* ifname) {
@@ -104,11 +145,11 @@ int rtnl_link_set_up(struct mnl_socket* rtnl, const char* ifname) {
   ifi->ifi_flags = ifi->ifi_change = IFF_UP;
 
   try_mnl_attr_put_strz_check(nlh, sizeof(buf), IFLA_IFNAME, ifname);
-  return try(nl_send_simple(rtnl, nlh));
+  return try(nl_send_ack(rtnl, nlh, buf, sizeof(buf)));
 }
 
 int rtnl_link_add_addr(struct mnl_socket* rtnl, uint32_t ifindex, ip_addr_t ip, uint8_t prefix) {
-  char buf[256];
+  char buf[MNL_SOCKET_BUFFER_SIZE];
 
   struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
   nlh->nlmsg_type = RTM_NEWADDR;
@@ -124,5 +165,5 @@ int rtnl_link_add_addr(struct mnl_socket* rtnl, uint32_t ifindex, ip_addr_t ip, 
   try_mnl_attr_put_check(nlh, sizeof(buf), IFA_LOCAL, ip_buf_len(ip), ip_buf(&ip));
   try_mnl_attr_put_check(nlh, sizeof(buf), IFA_ADDRESS, ip_buf_len(ip), ip_buf(&ip));
 
-  return try(nl_send_simple(rtnl, nlh));
+  return try(nl_send_ack(rtnl, nlh, buf, sizeof(buf)));
 }

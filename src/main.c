@@ -13,13 +13,13 @@ static int run(struct run_args* args) {
     printf("anycast: %s\n", ip_str);
   }
 
-for (size_t i = 0; i < args->peer_count; i++) {
+  for (size_t i = 0; i < args->peer_count; i++) {
     char buf[INET6_ADDRSTRLEN];
     const char* ip_str = try_p2(ip_stringify(args->peer[i], buf, sizeof(buf)));
     printf("peer: %s/%u\n", ip_str, args->peer_len[i]);
   }
 
-  struct net_state net_state;
+  struct net_state net_state = {};
   try(net_init(&net_state, args));
 
   printf("entering debug shell\n");

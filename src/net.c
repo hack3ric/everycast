@@ -8,12 +8,15 @@
 #include "netns.h"
 #include "nl.h"
 #include "try.h"
+#include "nft.h"
 
 int net_init(struct net_state* s, const struct run_args* args) {
   int result = 0;
   s->host_veth = "veth53";
   s->veth = "eth0";
   s->dummy = "eth1";
+
+  try3(nft());
 
   s->host_rtnl = try3_p(mnl_socket_open(NETLINK_ROUTE),
                         "failed to create host rtnetlink socket: %s", strerror(errno));

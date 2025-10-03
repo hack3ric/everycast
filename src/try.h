@@ -16,6 +16,7 @@
 
 // Some macro hack so that `try*` can accept optional error message.
 #define _get_macro(_0, _1, _2, _3, _4, _5, name, ...) name
+
 #define _ret(retval, ...) \
   _get_macro(_, ##__VA_ARGS__, _ret_1, _ret_1, _ret_1, _ret_1, _ret_0, )(retval, __VA_ARGS__)
 #define _ret_0(retval, _0) return retval
@@ -25,6 +26,7 @@
     fprintf(stderr, "\n");        \
     return retval;                \
   })
+
 #define _cleanup(retval, ...)                                                                 \
   _get_macro(_, ##__VA_ARGS__, _cleanup_1, _cleanup_1, _cleanup_1, _cleanup_1, _cleanup_0, )( \
     retval, __VA_ARGS__)
@@ -39,6 +41,17 @@
     fprintf(stderr, "\n");          \
     result = (retval);              \
     goto cleanup;                   \
+  })
+
+#define _cleanup2(retval, ...)                                                                     \
+  _get_macro(_, ##__VA_ARGS__, _cleanup2_1, _cleanup2_1, _cleanup2_1, _cleanup2_1, _cleanup2_0, )( \
+    retval, __VA_ARGS__)
+#define _cleanup2_0(retval, _0) goto cleanup
+#define _cleanup2_1(retval, _0, ...) \
+  ({                                 \
+    fprintf(stderr, __VA_ARGS__);    \
+    fprintf(stderr, "\n");           \
+    goto cleanup;                    \
   })
 
 // Used when errno is stored in `errno` declared in <errno.h>.
@@ -95,10 +108,10 @@
 #define try3_p2(stmt, ...) _try_p2(_cleanup, -errno, stmt, ##__VA_ARGS__)
 
 // try4, try4_*: parent contains `cleanup` label and returns pointer
-#define try4(stmt, ...) _try(_cleanup, NULL, stmt, ##__VA_ARGS__)
-#define try4_e(stmt, ...) _try_e(_cleanup, NULL, stmt, ##__VA_ARGS__)
-#define try4_p(stmt, ...) _try_p(_cleanup, NULL, stmt, ##__VA_ARGS__)
-#define try4_p2(stmt, ...) _try_p2(_cleanup, NULL, stmt, ##__VA_ARGS__)
+#define try4(stmt, ...) _try(_cleanup2, NULL, stmt, ##__VA_ARGS__)
+#define try4_e(stmt, ...) _try_e(_cleanup2, NULL, stmt, ##__VA_ARGS__)
+#define try4_p(stmt, ...) _try_p(_cleanup2, NULL, stmt, ##__VA_ARGS__)
+#define try4_p2(stmt, ...) _try_p2(_cleanup2, NULL, stmt, ##__VA_ARGS__)
 
 #define try_open(path, flags) try(open(path, flags), "cannot open " path ": %s", strerror(errno))
 #define try2_open(path, flags) try2(open(path, flags), "cannot open " path ": %s", strerror(errno))

@@ -12,7 +12,7 @@ else ifeq ($(MODE), release)
 CFLAGS += -O2
 endif
 
-LDFLAGS += -lmnl
+LDFLAGS += -lmnl -lnftnl
 
 # Rules
 

@@ -14,6 +14,21 @@
 #include "ip.h"
 #include "try.h"
 
+int ip_proto(ip_addr_t ip) {
+  if (ip.v6_addr32[0] == 0 && ip.v6_addr32[1] == 0 && ip.v6_addr32[2] == htonl(0xffff))
+    return AF_INET;
+  else
+    return AF_INET6;
+}
+
+ip_addr_t ip_canonicalize(ip_addr_t ip) {
+  // Deprecated IPv4-mapped IPv6 range ::/96
+  if (ip.v6_addr32[0] == 0 && ip.v6_addr32[1] == 0 && ip.v6_addr32[2] == 0 &&
+      ip.v6_addr32[3] != 0 && ip.v6_addr32[3] != htonl(1))
+    ip.v6_addr16[5] = 0xffff;
+  return ip;
+}
+
 static int _ip_parse(const char* str, ip_addr_t* ip, int* str_af) {
   if (str_af) *str_af = AF_INET6;
   if (inet_pton(AF_INET6, str, &ip->v6) != 1) {
@@ -76,6 +91,10 @@ int ip_parse_prefix(char* str, ip_addr_t* prefix, uint8_t* len) {
   }
 
   return 0;
+}
+
+const char* ip_stringify(ip_addr_t ip, char* dst, size_t size) {
+  return try2_p2(inet_ntop(ip_proto(ip), ip_buf(&ip), dst, size));
 }
 
 void ip_prefix_select_two(ip_addr_t prefix, uint8_t len, ip_addr_t* ip1, ip_addr_t* ip2) {
