@@ -1,7 +1,11 @@
 #include <alloca.h>
 #include <libmnl/libmnl.h>
+#include <libnftnl/common.h>
+#include <libnftnl/table.h>
 #include <linux/if_addr.h>
 #include <linux/if_link.h>
+#include <linux/netfilter.h>
+#include <linux/netfilter/nf_tables.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/veth.h>
@@ -12,13 +16,17 @@
 #include <string.h>
 #include <sys/socket.h>
 
+#include "defs.h"
 #include "ip.h"
 #include "nl.h"
 #include "try.h"
 
 /* Generic netlink */
 
-_Atomic uint32_t nl_seq_counter = 1;
+uint32_t nl_get_seq() {
+  static _Atomic uint32_t nl_seq_counter = 1;
+  return atomic_fetch_add(&nl_seq_counter, 1);
+}
 
 struct mnl_socket* nl_open_simple(int bus) {
   struct mnl_socket* sock =
@@ -31,17 +39,18 @@ cleanup:
   return NULL;
 }
 
-static int _nl_send(struct mnl_socket* sock, const void* req, size_t size) {
-  return try(mnl_socket_sendto(sock, req, size), "netlink sendto failed: %s", strerror(errno));
+static int _nl_send(struct mnl_socket* nl, const void* req, size_t size) {
+  return try(mnl_socket_sendto(nl, req, size), "netlink sendto failed: %s", strerror(errno));
 }
 
-static int _nl_recv(struct mnl_socket* sock, unsigned int seq, char* buf, char buf_size,
+static int _nl_recv(struct mnl_socket* nl, unsigned int seq, char* buf, size_t buf_size,
                     mnl_cb_t cb_data, void* data) {
   ENSURE_BUF(buf, buf_size);
   int len;
-  unsigned int portid = mnl_socket_get_portid(sock);
+  unsigned int portid = mnl_socket_get_portid(nl);
   do {
-    len = try(mnl_socket_recvfrom(sock, buf, sizeof(buf)), "oh no");
+    len = try(mnl_socket_recvfrom(nl, buf, buf_size), "netlink recvfrom failed: %s, buf = %p",
+              strerror(errno), buf);
     int cb_status = try(mnl_cb_run(buf, len, seq, portid, cb_data, data),
                         "netlink request failed: %s", strerror(errno));
     if (cb_status <= MNL_CB_STOP) break;
@@ -49,20 +58,20 @@ static int _nl_recv(struct mnl_socket* sock, unsigned int seq, char* buf, char b
   return 0;
 }
 
-int nl_send(struct mnl_socket* sock, struct nlmsghdr* req, mnl_cb_t cb_data, void* data, char* buf,
-            size_t buf_size) {
+int nl_send(struct mnl_socket* nl, const struct nlmsghdr* req, mnl_cb_t cb_data, void* data,
+            char* buf, size_t buf_size) {
   ENSURE_BUF(buf, buf_size);
-  try(_nl_send(sock, req, req->nlmsg_len));
-  try(_nl_recv(sock, req->nlmsg_seq, buf, buf_size, cb_data, data));
+  try(_nl_send(nl, req, req->nlmsg_len));
+  try(_nl_recv(nl, req->nlmsg_seq, buf, buf_size, cb_data, data));
   return 0;
 }
 
 // Assuming all batch members that returns some value are using the same seq num
-int nl_send_batch(struct mnl_socket* sock, struct mnl_nlmsg_batch* batch, unsigned int seq,
+int nl_send_batch(struct mnl_socket* nl, struct mnl_nlmsg_batch* batch, unsigned int seq,
                   mnl_cb_t cb_data, void* data, char* buf, size_t buf_size) {
   ENSURE_BUF(buf, buf_size);
-  try(_nl_send(sock, mnl_nlmsg_batch_head(batch), mnl_nlmsg_batch_size(batch)));
-  try(_nl_recv(sock, seq, buf, buf_size, cb_data, data));
+  try(_nl_send(nl, mnl_nlmsg_batch_head(batch), mnl_nlmsg_batch_size(batch)));
+  try(_nl_recv(nl, seq, buf, buf_size, cb_data, data));
   return 0;
 }
 
@@ -74,7 +83,7 @@ int rtnl_create_veth_pair(struct mnl_socket* rtnl, const char* ifname, const cha
   struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
   nlh->nlmsg_type = RTM_NEWLINK;
   nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK;
-  nlh->nlmsg_seq = atomic_fetch_add(&nl_seq_counter, 1);
+  nlh->nlmsg_seq = nl_get_seq();
 
   struct ifinfomsg* ifi = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifi));
   ifi->ifi_family = AF_UNSPEC;
@@ -104,7 +113,7 @@ int rtnl_create_dummy(struct mnl_socket* rtnl, const char* ifname) {
   struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
   nlh->nlmsg_type = RTM_NEWLINK;
   nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK;
-  nlh->nlmsg_seq = atomic_fetch_add(&nl_seq_counter, 1);
+  nlh->nlmsg_seq = nl_get_seq();
 
   struct ifinfomsg* ifi = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifi));
   ifi->ifi_family = AF_UNSPEC;
@@ -124,7 +133,7 @@ int rtnl_move_if_to_netns(struct mnl_socket* rtnl, const char* ifname, int netns
   struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
   nlh->nlmsg_type = RTM_SETLINK;
   nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
-  nlh->nlmsg_seq = atomic_fetch_add(&nl_seq_counter, 1);
+  nlh->nlmsg_seq = nl_get_seq();
 
   struct ifinfomsg* ifi = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifi));
 
@@ -134,12 +143,12 @@ int rtnl_move_if_to_netns(struct mnl_socket* rtnl, const char* ifname, int netns
 }
 
 int rtnl_link_set_up(struct mnl_socket* rtnl, const char* ifname) {
-  char buf[128];
+  char buf[MNL_SOCKET_BUFFER_SIZE];
 
   struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
   nlh->nlmsg_type = RTM_SETLINK;
   nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
-  nlh->nlmsg_seq = atomic_fetch_add(&nl_seq_counter, 1);
+  nlh->nlmsg_seq = nl_get_seq();
 
   struct ifinfomsg* ifi = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifi));
   ifi->ifi_flags = ifi->ifi_change = IFF_UP;
@@ -154,7 +163,7 @@ int rtnl_link_add_addr(struct mnl_socket* rtnl, uint32_t ifindex, ip_addr_t ip, 
   struct nlmsghdr* nlh = mnl_nlmsg_put_header(buf);
   nlh->nlmsg_type = RTM_NEWADDR;
   nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK;
-  nlh->nlmsg_seq = atomic_fetch_add(&nl_seq_counter, 1);
+  nlh->nlmsg_seq = nl_get_seq();
 
   struct ifaddrmsg* ifa = mnl_nlmsg_put_extra_header(nlh, sizeof(*ifa));
   ifa->ifa_family = ip_proto(ip);
@@ -166,4 +175,32 @@ int rtnl_link_add_addr(struct mnl_socket* rtnl, uint32_t ifindex, ip_addr_t ip, 
   try_mnl_attr_put_check(nlh, sizeof(buf), IFA_ADDRESS, ip_buf_len(ip), ip_buf(&ip));
 
   return try(nl_send_ack(rtnl, nlh, buf, sizeof(buf)));
+}
+
+/* nfnetlink (libnftnl) */
+
+int nfnl_create_table(struct mnl_socket* nfnl, uint16_t family, const char* name) {
+  const size_t buf_size = 2 * MNL_SOCKET_BUFFER_SIZE;
+  char* buf RAII(freep_char) = malloc(buf_size);
+
+  struct mnl_nlmsg_batch* batch = mnl_nlmsg_batch_start(buf, MNL_SOCKET_BUFFER_SIZE);
+
+  nftnl_batch_begin(mnl_nlmsg_batch_current(batch), nl_get_seq());
+  try_mnl(mnl_nlmsg_batch_next(batch));
+
+  unsigned int table_seq = nl_get_seq();
+  struct nlmsghdr* nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch), NFT_MSG_NEWTABLE,
+                                               family, NLM_F_CREATE | NLM_F_ACK, table_seq);
+
+  struct nftnl_table* t RAII(nftnl_table_freep) = try_p(nftnl_table_alloc());
+  try(nftnl_table_set_str(t, NFTNL_TABLE_NAME, name));
+  nftnl_table_set_u32(t, NFTNL_TABLE_FAMILY, family);
+  nftnl_table_set_u32(t, NFTNL_TABLE_FLAGS, 0);
+  nftnl_table_nlmsg_build_payload(nlh, t);
+  try_mnl(mnl_nlmsg_batch_next(batch));
+
+  nftnl_batch_end(mnl_nlmsg_batch_current(batch), nl_get_seq());
+  try_mnl(mnl_nlmsg_batch_next(batch));
+
+  return try(nl_send_batch_ack(nfnl, batch, table_seq, buf, buf_size));
 }

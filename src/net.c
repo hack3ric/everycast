@@ -1,4 +1,5 @@
 #include <libmnl/libmnl.h>
+#include <linux/netfilter.h>
 #include <stdint.h>
 #include <unistd.h>
 
@@ -8,7 +9,6 @@
 #include "netns.h"
 #include "nl.h"
 #include "try.h"
-#include "nft.h"
 
 int net_init(struct net_state* s, const struct run_args* args) {
   int result = 0;
@@ -16,14 +16,10 @@ int net_init(struct net_state* s, const struct run_args* args) {
   s->veth = "eth0";
   s->dummy = "eth1";
 
-  try3(nft());
-
-  s->host_rtnl = try3_p(mnl_socket_open(NETLINK_ROUTE),
-                        "failed to create host rtnetlink socket: %s", strerror(errno));
-
+  s->host_rtnl = try3_p(nl_open_simple(NETLINK_ROUTE));
+  s->host_nfnl = try3_p(nl_open_simple(NETLINK_NETFILTER));
   try3(netns_create(&s->host_netns, &s->netns));
-  s->rtnl = try3_p(mnl_socket_open(NETLINK_ROUTE),
-                   "failed to create rtnetlink socket inside netns: %s", strerror(errno));
+  s->rtnl = try3_p(nl_open_simple(NETLINK_ROUTE));
 
   try3(rtnl_create_veth_pair(s->rtnl, s->host_veth, s->veth), "failed to create veth pair");
   try3(rtnl_move_if_to_netns(s->rtnl, s->host_veth, s->host_netns),
@@ -50,6 +46,8 @@ int net_init(struct net_state* s, const struct run_args* args) {
   try3(rtnl_link_set_up(s->rtnl, "lo"));
   try3(rtnl_link_set_up(s->rtnl, s->veth));
   try3(rtnl_link_set_up(s->rtnl, s->dummy));
+
+  try3(nfnl_create_table(s->host_nfnl, NFPROTO_INET, "everycast"));
 
   result = 0;
   goto success;
